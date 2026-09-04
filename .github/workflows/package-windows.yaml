@@ -114,6 +114,17 @@ jobs:
           test -x "$sdk/signtool.exe"
           cygpath -w "$sdk" >> $GITHUB_PATH
 
+      # Every native module here is built rather than downloaded, and building
+      # them needs headers for the node they are built against. Those are the
+      # same for a given node version, so they are kept between runs. This
+      # holds nothing that was compiled, so a hit can only save downloading,
+      # never hand the build a stale binary.
+      - name: Keep the node headers between runs
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/AppData/Local/node-gyp/Cache
+          key: node-gyp-${{ runner.os }}-${{ hashFiles('.node-version') }}
+
       - run: npm ci
         shell: bash
       - run: npm run build
