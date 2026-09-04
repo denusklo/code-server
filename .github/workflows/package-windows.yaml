@@ -20,10 +20,20 @@ jobs:
       VSCODE_TARGET: win32-x64
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       TAG: ${{ inputs.version }}
-      # Ensure native modules are built from source to avoid prebuilds.
+      # Ensure native modules are built from source to avoid prebuilds. npm
+      # warns that it does not recognise this name, and that is beside the
+      # point: nothing here goes through npm's config. node-gyp-build, which
+      # is what argon2's install script runs, tests
+      # process.env.npm_config_build_from_source === 'true' straight out of
+      # the environment, and it is the only thing in the tree that reads it.
       npm_config_build_from_source: true
-      # The runner has both a 2022 and an older toolset; say which one.
-      npm_config_msvs_version: 2022
+      # There is deliberately no msvs_version. Setting it here cannot work:
+      # npm rewrites npm_config_msvs_version into the config key
+      # "msvs-version", with a dash, while node-gyp only ever reads
+      # msvs_version with an underscore and only from an npmrc or the command
+      # line -- it sets GYP_MSVS_VERSION itself and never reads that either.
+      # It was set for nine runs and never reached anything. The toolset is
+      # picked by node-gyp's own detection, which finds the image's 2022 one.
       # The build works out which system it is on and puts the answer in OS,
       # but only when OS is empty, and windows always fills it in with
       # something else. Every question the build asks about the system
