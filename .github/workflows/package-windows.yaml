@@ -101,6 +101,19 @@ jobs:
           chmod +x "$RUNNER_TEMP/shim/jq"
           echo "$RUNNER_TEMP/shim" >> $GITHUB_PATH
 
+      # Stamping version details into the native binaries clears any signature
+      # they arrived with first, and asks signtool whether there is one. That
+      # only reads and removes, so it wants no certificate and signs nothing —
+      # it just has to be findable, and the sdk that carries it is not on the
+      # path.
+      - name: Put signtool on the path
+        shell: bash
+        run: |
+          sdk=$(ls -d "/c/Program Files (x86)/Windows Kits/10/bin"/*/x64 | sort -V | tail -1)
+          echo "using $sdk"
+          test -x "$sdk/signtool.exe"
+          cygpath -w "$sdk" >> $GITHUB_PATH
+
       - run: npm ci
         shell: bash
       - run: npm run build
