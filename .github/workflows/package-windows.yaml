@@ -26,17 +26,25 @@ jobs:
       npm_config_msvs_version: 2022
 
     steps:
-      - name: Strip update/ and v from tag and set major version
+      # Git on windows rewrites line endings on checkout by default, which
+      # turns every shell script in the build into one bash cannot read and
+      # every name in patches/series into one with a stray return on the end.
+      - name: Keep line endings as they are in the repository
+        shell: bash
+        run: git config --global core.autocrlf false
+
+      # Takes the tag with or without its v, since both spellings get typed.
+      - name: Resolve the tag
         shell: bash
         run: |
-          version=${TAG#update/}
-          version=${version#v}
-          version=4${version:1}
-          echo "VERSION=$version" >> $GITHUB_ENV
+          tag=${TAG#update/}
+          tag=${tag#v}
+          echo "TAG_REF=v$tag" >> $GITHUB_ENV
+          echo "VERSION=$tag" >> $GITHUB_ENV
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
-          ref: ${{ inputs.version }}
+          ref: ${{ env.TAG_REF }}
           submodules: true
 
       # quilt has no windows build. The patches are ordinary -p1 diffs against
@@ -64,8 +72,19 @@ jobs:
         shell: bash
       - run: npm run build:vscode
         shell: bash
-      - run: KEEP_MODULES=1 npm run release
+      # build-release.sh copies the tree with rsync, which neither windows nor
+      # the git bash on the runner has. MSYS2 is already here, just not on the
+      # path, and it is only put in front for the step that needs it.
+      - name: Install rsync
+        shell: cmd
+        run: C:\msys64\usr\bin\pacman -Sy --noconfirm --needed rsync
+
+      - name: Build the release tree
         shell: bash
+        run: |
+          PATH="/c/msys64/usr/bin:$PATH"
+          rsync --version | head -1
+          KEEP_MODULES=1 npm run release
 
       # build-packages.sh archives with bsdtar's -s off linux, which the tar in
       # git-bash does not have. Windows ships bsdtar, so use that one.
