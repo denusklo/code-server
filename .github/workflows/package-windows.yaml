@@ -1,0 +1,83 @@
+name: Package windows
+
+# Builds a windows release tarball the same way package-macos builds a darwin
+# one: on that platform's own runner, with the native modules compiled there.
+# Kept separate from release.yaml so it can be triggered on its own.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Tag to build, for example v4.132.0
+        required: true
+        type: string
+
+jobs:
+  package-windows:
+    name: win32-x64
+    runs-on: windows-2022
+    timeout-minutes: 180
+    env:
+      VSCODE_TARGET: win32-x64
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ inputs.version }}
+      # Ensure native modules are built from source to avoid prebuilds.
+      npm_config_build_from_source: true
+      # The runner has both a 2022 and an older toolset; say which one.
+      npm_config_msvs_version: 2022
+
+    steps:
+      - name: Strip update/ and v from tag and set major version
+        shell: bash
+        run: |
+          version=${TAG#update/}
+          version=${version#v}
+          version=4${version:1}
+          echo "VERSION=$version" >> $GITHUB_ENV
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          ref: ${{ inputs.version }}
+          submodules: true
+
+      # quilt has no windows build. The patches are ordinary -p1 diffs against
+      # the repository root, so git applies them in the order series names.
+      - name: Apply patches
+        shell: bash
+        run: |
+          while read -r patch; do
+            case "$patch" in '' | '#'*) continue ;; esac
+            echo "applying $patch"
+            git apply --whitespace=nowarn "patches/$patch"
+          done < patches/series
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            test/package-lock.json
+
+      - run: npm ci
+        shell: bash
+      - run: npm run build
+        shell: bash
+      - run: npm run build:vscode
+        shell: bash
+      - run: KEEP_MODULES=1 npm run release
+        shell: bash
+
+      # build-packages.sh archives with bsdtar's -s off linux, which the tar in
+      # git-bash does not have. Windows ships bsdtar, so use that one.
+      - name: Package
+        shell: bash
+        run: |
+          PATH="/c/Windows/System32:$PATH"
+          tar --version
+          npm run package
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: code-server-${{ inputs.version }}-windows-x64
+          path: release-packages/*.tar.gz
+          if-no-files-found: error
