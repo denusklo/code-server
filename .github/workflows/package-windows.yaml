@@ -216,14 +216,42 @@ jobs:
       # same for a given node version, so they are kept between runs. This
       # holds nothing that was compiled, so a hit can only save downloading,
       # never hand the build a stale binary.
-      - name: Keep the node headers between runs
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      #
+      # Restore and save are separate because the whole action saves only on a
+      # green job: its post step is declared post-if success(). While this job
+      # is being brought up on windows it has failed every time, so the cache
+      # it is meant to fill could never come into existence, and the step that
+      # was added to shorten the loop did nothing for exactly the runs it was
+      # added for. Saving after npm ci instead fills it on the first run that
+      # gets that far.
+      - name: Restore the node headers from a previous run
+        id: node-headers
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/AppData/Local/node-gyp/Cache
           key: node-gyp-${{ runner.os }}-${{ hashFiles('.node-version') }}
 
-      - run: npm ci
+      - id: npm-ci
+        run: npm ci
         shell: bash
+
+      # npm ci is what downloads the headers, so this is the earliest point
+      # they exist and the latest point that is still before anything that can
+      # fail for reasons of its own. It runs even when a later step has already
+      # failed, but not when npm ci itself did, since a half-written header
+      # tree under an exact key would be a cache no later run could correct.
+      #
+      # The key is exact and there are no restore-keys. It names a node version
+      # and nothing else, so anything that would change it changes which
+      # headers are wanted, and a near miss would be the wrong ones rather than
+      # a head start.
+      - name: Save the node headers for the next run
+        if: always() && steps.npm-ci.outcome == 'success' && steps.node-headers.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/AppData/Local/node-gyp/Cache
+          key: ${{ steps.node-headers.outputs.cache-primary-key }}
+
       - run: npm run build
         shell: bash
       - run: npm run build:vscode
