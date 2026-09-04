@@ -65,6 +65,96 @@ jobs:
             git apply --whitespace=nowarn "patches/$patch"
           done < patches/series
 
+      # Four corrections to code-server's own build scripts, every one of them
+      # in a windows arm that has never run. They are applied here rather than
+      # worked around, because the bugs are in those scripts and each hunk
+      # below is a coder PR waiting to be written. They go here because the
+      # checkout above replaces the tree with the tag's own copy of them.
+      - name: Correct the windows arms of the build scripts
+        shell: bash
+        run: |
+          # Replace one exact occurrence, and stop if the tag no longer says what this
+          # was written against. A tag that already carries a fix should be noticed
+          # rather than patched a second time.
+          correct() {
+            local file=$1 old=$2 new=$3 count
+            count=$(grep -cF -- "$old" "$file" || true)
+            if [ "$count" != 1 ]; then
+              echo "expected exactly one match in $file, found $count:"
+              echo "$old"
+              exit 1
+            fi
+            old=$old new=$new perl -0777 -pi -e 's/\Q$ENV{old}\E/$ENV{new}/' "$file"
+            echo "corrected $file"
+          }
+
+          # 1. The remote-cli launcher is named after product.applicationName, which
+          # this repository overrides to code-server, so the file gulp writes is
+          # remote-cli/code-server.cmd. The windows arm of build-vscode.sh asks for
+          # remote-cli/code.cmd, which is the name of the *template* it is built from.
+          # Its own posix arm, four lines below, already spells it remote-cli/code-server
+          # -- only the windows arm has never run. See lib/vscode build/gulpfile.reh.ts,
+          # the platform === 'win32' arm:
+          #   rename(`bin/remote-cli/${product.applicationName}.cmd`)
+          correct ci/build/build-vscode.sh \
+            '      fix-bin-script remote-cli/code.cmd' \
+            '      fix-bin-script remote-cli/code-server.cmd'
+
+          # 2. fix-bin-script rewrites the launcher's ROOT to the release root so it can
+          # find code-server's own tree, and then has to send the two things that still
+          # live in the vscode tree back down again. It does that for out/ on both
+          # platforms, and for the node binary only on posix, where the third sed
+          # rewrites $ROOT/node to $ROOT/lib/node. The windows half has no counterpart,
+          # so the .cmd launchers look for node.exe at the release root while
+          # build-release.sh puts it in lib.
+          #
+          # Read-derived from the templates and the release layout, NOT confirmed by
+          # running the artifact: if the runtime proof finds node somewhere else, this is
+          # the line to distrust first. NODE_EXEC_PATH, which the posix rewrite also
+          # honours, has no equivalent here.
+          old_sed=$(cat <<'EOF'
+            sed -i.bak 's/%ROOT_DIR%\\out/%VSROOT_DIR%\\out/g' "$script"
+          EOF
+          )
+          new_sed=$(cat <<'EOF'
+            sed -i.bak 's/%ROOT_DIR%\\out/%VSROOT_DIR%\\out/g' "$script"
+            sed -i.bak 's/%ROOT_DIR%\\node.exe/%ROOT_DIR%\\lib\\node.exe/g' "$script"
+          EOF
+          )
+          correct ci/build/build-vscode.sh "$old_sed" "$new_sed"
+
+          # 3. The node binary is called node.exe on windows -- gulpfile.reh.ts renames
+          # it in the same win32 arm as above -- so this copy asks for a file that is not
+          # there, and takes the whole release step down with it under set -e.
+          old_cp=$(cat <<'EOF'
+              cp "./lib/vscode-reh-web-$VSCODE_TARGET/node" "$RELEASE_PATH/lib"
+          EOF
+          )
+          new_cp=$(cat <<'EOF'
+              if [ "$OS" = windows ]; then
+                cp "./lib/vscode-reh-web-$VSCODE_TARGET/node.exe" "$RELEASE_PATH/lib"
+              else
+                cp "./lib/vscode-reh-web-$VSCODE_TARGET/node" "$RELEASE_PATH/lib"
+              fi
+          EOF
+          )
+          correct ci/build/build-release.sh "$old_cp" "$new_cp"
+
+          # 4. The same name again, in the exclusion that keeps node out of lib/vscode
+          # because it belongs one directory above it. /node does not match node.exe, so
+          # on windows the binary is copied into lib/vscode as well as being placed above
+          # it. Adding the windows spelling costs nothing where no such file exists.
+          old_ex=$(cat <<'EOF'
+            rsync_opts+=(--exclude /node)
+          EOF
+          )
+          new_ex=$(cat <<'EOF'
+            rsync_opts+=(--exclude /node)
+            rsync_opts+=(--exclude /node.exe)
+          EOF
+          )
+          correct ci/build/build-release.sh "$old_ex" "$new_ex"
+
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           node-version-file: .node-version
