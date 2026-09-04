@@ -73,6 +73,34 @@ jobs:
         shell: bash
         run: echo "npm_config_script_shell=$(cygpath -w "$(command -v bash)")" >> $GITHUB_ENV
 
+      # The build merges json by handing jq a process substitution, which bash
+      # presents as a file under /dev/fd. The jq on this image is a windows
+      # program and cannot open those, so it reads the second input as nothing
+      # and the merge fails. This hands it a real file instead. Both the
+      # product and the package merge go through here.
+      - name: Let jq read what bash hands it
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/shim"
+          cat > "$RUNNER_TEMP/shim/jq" <<'SHIM'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          args=()
+          for arg in "$@"; do
+            case $arg in
+              /dev/fd/* | /proc/*/fd/*)
+                copy=$(mktemp)
+                cat "$arg" > "$copy"
+                args+=("$copy")
+                ;;
+              *) args+=("$arg") ;;
+            esac
+          done
+          exec jq.exe "${args[@]}"
+          SHIM
+          chmod +x "$RUNNER_TEMP/shim/jq"
+          echo "$RUNNER_TEMP/shim" >> $GITHUB_PATH
+
       - run: npm ci
         shell: bash
       - run: npm run build
