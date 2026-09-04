@@ -66,6 +66,13 @@ jobs:
             package-lock.json
             test/package-lock.json
 
+      # npm hands every script it runs to cmd, which cannot run the shell
+      # scripts this repository is built out of. Point it at the same bash the
+      # steps here use rather than at a path, which moves between images.
+      - name: Let npm run shell scripts
+        shell: bash
+        run: echo "npm_config_script_shell=$(cygpath -w "$(command -v bash)")" >> $GITHUB_ENV
+
       - run: npm ci
         shell: bash
       - run: npm run build
