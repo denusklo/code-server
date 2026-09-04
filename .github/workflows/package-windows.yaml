@@ -282,16 +282,42 @@ jobs:
         shell: bash
       # build-release.sh copies the tree with rsync, which neither windows nor
       # the git bash on the runner has. MSYS2 is already here, just not on the
-      # path, and it is only put in front for the step that needs it.
+      # path.
       - name: Install rsync
         shell: cmd
         run: C:\msys64\usr\bin\pacman -Sy --noconfirm --needed rsync
 
+      # Only rsync crosses over, through a forwarder in the same shim
+      # directory the jq step already made. This used to put msys2's /usr/bin
+      # in front for the release step instead, and that broke the npm run in
+      # it: `npm` on the path is a shell script whose shebang reads
+      # `#!/usr/bin/env bash`, so with msys2 first it is msys2's bash that
+      # runs it. Crossing into that second msys runtime does not carry the
+      # environment -- measured here, 93 variables arrive as 7, with PATH
+      # rebuilt from msys2's own defaults. npm therefore saw no script-shell
+      # and fell back to cmd, which cannot run ./ci/build/build-release.sh.
+      #
+      # KEEP_MODULES=1 was being dropped by the same crossing, so even a
+      # release that got past the shell would have built a tree with no
+      # node_modules and no node beside it, and said nothing about it.
+      #
+      # A forwarder avoids the whole class: rsync is a native exe that loads
+      # its own runtime from beside itself, exactly as it did before, and
+      # nothing else on the path moves.
+      - name: Reach rsync without moving the path
+        shell: bash
+        run: |
+          cat > "$RUNNER_TEMP/shim/rsync" <<'SHIM'
+          #!/usr/bin/env bash
+          exec /c/msys64/usr/bin/rsync.exe "$@"
+          SHIM
+          chmod +x "$RUNNER_TEMP/shim/rsync"
+
       - name: Build the release tree
         shell: bash
         run: |
-          PATH="/c/msys64/usr/bin:$PATH"
           rsync --version | head -1
+          npm config get script-shell
           KEEP_MODULES=1 npm run release
 
       # No PATH change here on purpose. The archive step needs a tar that can
