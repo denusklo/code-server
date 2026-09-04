@@ -78,7 +78,10 @@ jobs:
           # rather than patched a second time.
           correct() {
             local file=$1 old=$2 new=$3 count
-            count=$(grep -cF -- "$old" "$file" || true)
+            # Counted with perl rather than grep because some of these span
+            # more than one line, and grep -F reads a multi-line pattern as
+            # several alternatives and counts lines matching any of them.
+            count=$(old=$old perl -0777 -ne '$c = 0; $c++ while /\Q$ENV{old}\E/g; print $c' "$file")
             if [ "$count" != 1 ]; then
               echo "expected exactly one match in $file, found $count:"
               echo "$old"
@@ -154,6 +157,27 @@ jobs:
           EOF
           )
           correct ci/build/build-release.sh "$old_ex" "$new_ex"
+
+          # 5. build-packages.sh renames the tree's top directory as it
+          # archives, and reaches for bsdtar's -s off linux because that is
+          # what macos has. The bsdtar windows ships is built without
+          # substitution support -- it answers "-s is not supported by this
+          # version of bsdtar", and its --help lists no such option -- so
+          # windows belongs on the GNU --transform arm instead. Verified
+          # locally against both: bsdtar 3.7.7 from System32 refuses -s, and
+          # git bash's own GNU tar 1.34 takes the linux line verbatim and
+          # produces the correctly renamed top directory owned by 0/0.
+          old_tar=$(cat <<'EOF'
+            if [[ $OS == "linux" ]]; then
+              tar -czf "release-packages/$release_name.tar.gz" --owner=0 --group=0 --transform "s/^$RELEASE_PATH/$release_name/" "$RELEASE_PATH"
+          EOF
+          )
+          new_tar=$(cat <<'EOF'
+            if [[ $OS == "linux" || $OS == "windows" ]]; then
+              tar -czf "release-packages/$release_name.tar.gz" --owner=0 --group=0 --transform "s/^$RELEASE_PATH/$release_name/" "$RELEASE_PATH"
+          EOF
+          )
+          correct ci/build/build-packages.sh "$old_tar" "$new_tar"
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
@@ -270,13 +294,21 @@ jobs:
           rsync --version | head -1
           KEEP_MODULES=1 npm run release
 
-      # build-packages.sh archives with bsdtar's -s off linux, which the tar in
-      # git-bash does not have. Windows ships bsdtar, so use that one.
+      # No PATH change here on purpose. The archive step needs a tar that can
+      # rename the tree's top directory, and of the two on this image it is
+      # git bash's own GNU tar that can: windows' bsdtar is built without
+      # substitution support and refuses -s outright. The correction above
+      # puts windows on the --transform arm to match, so the tar already in
+      # front is the right one. Asserted rather than assumed, since the two
+      # are interchangeable everywhere except in exactly this.
       - name: Package
         shell: bash
         run: |
-          PATH="/c/Windows/System32:$PATH"
-          tar --version
+          tar --version | head -1
+          case "$(tar --version | head -1)" in
+            *GNU*) ;;
+            *) echo "expected GNU tar for --transform, got the above" >&2; exit 1 ;;
+          esac
           npm run package
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
