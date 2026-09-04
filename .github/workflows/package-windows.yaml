@@ -24,6 +24,13 @@ jobs:
       npm_config_build_from_source: true
       # The runner has both a 2022 and an older toolset; say which one.
       npm_config_msvs_version: 2022
+      # The build works out which system it is on and puts the answer in OS,
+      # but only when OS is empty, and windows always fills it in with
+      # something else. Every question the build asks about the system
+      # therefore gets the wrong answer, from which launchers to fix up to
+      # what the archive is called. Answering it up front is what the check
+      # for an existing value is there to allow.
+      OS: windows
 
     steps:
       # Git on windows rewrites line endings on checkout by default, which
